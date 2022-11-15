@@ -1,0 +1,135 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model album_attributes {
+  id        Int     @id @default(autoincrement())
+  entity_id Int?
+  key       String?
+  value     String?
+
+  @@unique([entity_id, key], map: "sqlite_autoindex_album_attributes_1")
+  @@index([entity_id], map: "album_attributes_by_entity")
+}
+
+model albums {
+  id                   Int     @id @default(autoincrement())
+  artpath              Bytes?
+  added                Float?
+  albumartist          String?
+  albumartist_sort     String?
+  albumartist_credit   String?
+  album                String?
+  genre                String?
+  year                 Int?
+  month                Int?
+  day                  Int?
+  disctotal            Int?
+  comp                 Int?
+  mb_albumid           String?
+  mb_albumartistid     String?
+  albumtype            String?
+  label                String?
+  mb_releasegroupid    String?
+  asin                 String?
+  catalognum           String?
+  script               String?
+  language             String?
+  country              String?
+  albumstatus          String?
+  albumdisambig        String?
+  releasegroupdisambig String?
+  rg_album_gain        Float?
+  rg_album_peak        Float?
+  r128_album_gain      Int?
+  original_year        Int?
+  original_month       Int?
+  original_day         Int?
+  items                items[]
+}
+
+model item_attributes {
+  id        Int     @id @default(autoincrement())
+  entity_id Int?
+  key       String?
+  value     String?
+
+  @@unique([entity_id, key], map: "sqlite_autoindex_item_attributes_1")
+  @@index([entity_id], map: "item_attributes_by_entity")
+}
+
+model items {
+  id                   Int     @id @default(autoincrement())
+  path                 Bytes?
+  album_id             Int?
+  Album                albums? @relation(fields: [album_id], references: [id])
+  title                String?
+  artist               String?
+  artist_sort          String?
+  artist_credit        String?
+  album                String?
+  albumartist          String?
+  albumartist_sort     String?
+  albumartist_credit   String?
+  genre                String?
+  lyricist             String?
+  composer             String?
+  composer_sort        String?
+  arranger             String?
+  grouping             String?
+  year                 Int?
+  month                Int?
+  day                  Int?
+  track                Int?
+  tracktotal           Int?
+  disc                 Int?
+  disctotal            Int?
+  lyrics               String?
+  comments             String?
+  bpm                  Int?
+  comp                 Int?
+  mb_trackid           String?
+  mb_albumid           String?
+  mb_artistid          String?
+  mb_albumartistid     String?
+  mb_releasetrackid    String?
+  albumtype            String?
+  label                String?
+  acoustid_fingerprint String?
+  acoustid_id          String?
+  mb_releasegroupid    String?
+  asin                 String?
+  catalognum           String?
+  script               String?
+  language             String?
+  country              String?
+  albumstatus          String?
+  media                String?
+  albumdisambig        String?
+  releasegroupdisambig String?
+  disctitle            String?
+  encoder              String?
+  rg_track_gain        Float?
+  rg_track_peak        Float?
+  rg_album_gain        Float?
+  rg_album_peak        Float?
+  r128_track_gain      Int?
+  r128_album_gain      Int?
+  original_year        Int?
+  original_month       Int?
+  original_day         Int?
+  initial_key          String?
+  length               Float?
+  bitrate              Int?
+  format               String?
+  samplerate           Int?
+  bitdepth             Int?
+  channels             Int?
+  mtime                Float?
+  added                Float?
+}
