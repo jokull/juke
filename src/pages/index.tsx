@@ -7,7 +7,7 @@ import * as Slider from "@radix-ui/react-slider";
 import type { inferProcedureOutput } from "@trpc/server";
 import classNames from "classnames";
 import Fuse from "fuse.js";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   AudioPlayerProvider,
   useAudioPlayer,
@@ -114,6 +114,8 @@ function Player({ album }: { album: Album }) {
 }
 
 export default function Page() {
+  const ref = useRef<HTMLInputElement>(null);
+
   const [query, setQuery] = useState("");
   const debouncedQuery = useDebounce(query.trim(), 380);
   const albumsQuery = trpc.juke.albums.useQuery();
@@ -132,6 +134,21 @@ export default function Page() {
         .search(query)
         .map(({ item }) => item)
     : albums;
+
+  useEffect(() => {
+    function callback(event: KeyboardEvent) {
+      console.log(event.key === "k", event.metaKey, ref.current);
+      if (event.key === "k" && event.metaKey && ref.current) {
+        window.scrollTo({ top: 0 });
+        ref.current.focus();
+        ref.current.setSelectionRange(0, ref.current.value.length);
+      }
+    }
+    document.addEventListener("keydown", callback);
+    return () => {
+      document.removeEventListener("keydown", callback);
+    };
+  });
 
   return (
     <>
@@ -160,6 +177,7 @@ export default function Page() {
             className="block w-full rounded-md border-gray-300 shadow-sm focus:border-purple-500 focus:ring-purple-500 sm:text-sm"
             type="search"
             autoFocus
+            ref={ref}
             placeholder="Search"
             value={query}
             onChange={(event) => {
