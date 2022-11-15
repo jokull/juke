@@ -131,13 +131,12 @@ export default function Page() {
         includeScore: true,
         minMatchCharLength: 3,
       })
-        .search(query)
+        .search(debouncedQuery)
         .map(({ item }) => item)
     : albums;
 
   useEffect(() => {
     function callback(event: KeyboardEvent) {
-      console.log(event.key === "k", event.metaKey, ref.current);
       if (event.key === "k" && event.metaKey && ref.current) {
         window.scrollTo({ top: 0 });
         ref.current.focus();
