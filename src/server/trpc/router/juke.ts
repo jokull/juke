@@ -8,6 +8,7 @@ function getRelativePath(path: Buffer | null) {
     .decode(path ?? undefined)
     .split("/")
     .slice(5)
+    .map((component) => encodeURIComponent(component))
     .join("/");
 }
 
