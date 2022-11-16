@@ -1,34 +1,25 @@
-import Head from "next/head";
-
-import { trpc } from "../utils/trpc";
-
 import { Popover } from "@headlessui/react";
 import * as Slider from "@radix-ui/react-slider";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import type { inferProcedureOutput } from "@trpc/server";
 import classNames from "classnames";
-import Fuse from "fuse.js";
+import Head from "next/head";
+import { useRouter } from "next/router";
 import { useEffect, useRef, useState } from "react";
 import {
   AudioPlayerProvider,
   useAudioPlayer,
   useAudioPosition,
 } from "react-use-audio-player";
+import * as R from "remeda";
+import { useDebounce, useElementSize } from "usehooks-ts";
+
+import SelectSonos from "../components/SelectSonos";
 import type { AppRouter } from "../server/trpc/router/_app";
+import { trpc } from "../utils/trpc";
 
 type Album = inferProcedureOutput<AppRouter["juke"]["albums"]>[0];
-
-function useDebounce<T>(value: T, delay?: number): T {
-  const [debouncedValue, setDebouncedValue] = useState<T>(value);
-
-  useEffect(() => {
-    const timer = setTimeout(() => setDebouncedValue(value), delay || 500);
-    return () => {
-      clearTimeout(timer);
-    };
-  }, [value, delay]);
-
-  return debouncedValue;
-}
+type Speaker = inferProcedureOutput<AppRouter["juke"]["sonosDevices"]>[0];
 
 const URLBASE = process.env.NEXT_PUBLIC_URLBASE ?? "";
 
@@ -60,10 +51,35 @@ function Player({ album }: { album: Album }) {
 
   return (
     <div className="flex flex-col gap-4">
+      <div className="font-mono text-xs">
+        <p className="mb-3">
+          {album.artist} / {album.name}
+        </p>
+        <ol className="hide-scrollbar flex max-h-64 flex-col items-start gap-0.5 overflow-y-auto">
+          {list.map((track, i) => (
+            <li
+              className={`w-full ${i === index ? "text-white" : ""}`}
+              key={track.id}
+            >
+              <button
+                className="w-full truncate text-left hover:underline"
+                onClick={() => {
+                  setIndex(i);
+                }}
+              >
+                {i === index ? "▶ ." : String(i + 1).padStart(2, "0") + "."}{" "}
+                {track.name}
+              </button>
+            </li>
+          ))}
+        </ol>
+      </div>
       <Slider.Root
         className="relative flex h-5 w-full touch-none items-center"
         value={[position]}
-        onValueChange={(value) => value.forEach((value) => seek(value))}
+        onValueChange={(value) => {
+          value.forEach((value) => seek(value));
+        }}
         max={duration}
         step={1}
         aria-label="Volume"
@@ -78,36 +94,123 @@ function Player({ album }: { album: Album }) {
           )}
         />
       </Slider.Root>
-      <ol className="hide-scrollbar flex max-h-64 flex-col items-start gap-0.5 overflow-y-auto">
-        {list.map((track, i) => (
-          <li
-            className={`w-full font-mono text-xs ${
-              i === index ? "text-white" : ""
-            }`}
-            key={track.id}
-          >
-            <button
-              className="w-full truncate text-left hover:underline"
-              onClick={() => {
-                setIndex(i);
-              }}
-            >
-              {i === index ? "▶ ." : String(i + 1).padStart(2, "0") + "."}{" "}
-              {track.name}
-            </button>
-          </li>
-        ))}
-      </ol>
-      <div className="flex justify-center gap-4 font-mono">
+      <div className="flex items-stretch justify-center gap-4 font-mono">
+        {!!album.artpath && (
+          //eslint-disable-next-line @next/next/no-img-element
+          <img
+            alt="Album cover"
+            className="aspect-square h-10 rounded"
+            src={`${URLBASE}${album.artpath}`}
+          />
+        )}
         <button
           onClick={() => {
             togglePlayPause();
           }}
           type="button"
-          className="block w-full rounded-md border-gray-300 bg-neutral-700 px-4 py-2 shadow-sm focus:border-purple-500 focus:ring-purple-500 sm:text-sm"
+          className="flex h-10 w-full items-center justify-center rounded-md border-gray-300 bg-neutral-700 px-4 py-2 text-neutral-200 shadow-sm focus:border-purple-500 focus:ring-purple-500 sm:text-sm"
         >
           {playing ? "Pause" : "Play"}
         </button>
+      </div>
+    </div>
+  );
+}
+
+function useCurrentAlbumId() {
+  const router = useRouter();
+  return new URL(router.asPath, "https://localhost").searchParams.get("album");
+}
+
+function Row({ albums, count }: { albums: Album[]; count: number }) {
+  const currentAlbumId = useCurrentAlbumId();
+  const router = useRouter();
+  return (
+    <>
+      {albums.map((album) => (
+        <button
+          onClick={(event) => {
+            event.detail === 2
+              ? void router.push(`/?album=${album.id}`, undefined, {
+                  shallow: true,
+                })
+              : null;
+          }}
+          key={album.id}
+          className="relative aspect-square"
+          style={{ width: `${100 / count}%` }}
+        >
+          {album.id.toString() === currentAlbumId ? (
+            <div className="absolute inset-0 flex items-center justify-center bg-black/30 text-3xl text-white">
+              <span className="animate-pulse">▶</span>
+            </div>
+          ) : null}
+          {album.artpath.trim() ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              loading="lazy"
+              src={`${URLBASE}${album.artpath}`}
+              className="aspect-square w-full object-cover"
+              alt={`Cover of ${album.name ?? "unknown"}`}
+            />
+          ) : (
+            <div className="flex aspect-square w-full items-center justify-around bg-neutral-400 p-2 text-center text-sm">
+              <div>
+                <div className="font-bold">{album.artist}</div>
+                {album.name}
+              </div>
+            </div>
+          )}
+        </button>
+      ))}
+    </>
+  );
+}
+
+function Albums({ albums }: { albums: Album[] }) {
+  const [parentEl, setParentEl] = useState<HTMLDivElement | null>(null);
+  const [parentRef, { width }] = useElementSize();
+
+  const count = Math.floor(width / 144);
+  const rows = R.chunk(albums, count);
+
+  const rowVirtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => parentEl,
+    estimateSize: () => 144,
+  });
+
+  return (
+    <div
+      ref={(el) => {
+        parentRef(el);
+        setParentEl(el);
+      }}
+      className="overflow-hidden rounded-md"
+    >
+      <div
+        style={{
+          height: rowVirtualizer.getTotalSize(),
+        }}
+        className="relative w-full"
+      >
+        {rowVirtualizer.getVirtualItems().map((virtualRow) => (
+          <div
+            key={virtualRow.key}
+            data-index={virtualRow.index}
+            ref={rowVirtualizer.measureElement}
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              width: "100%",
+              transform: `translateY(${virtualRow.start}px)`,
+            }}
+            className="flex"
+          >
+            <Row albums={rows[virtualRow.index] ?? []} count={count} />
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -118,22 +221,19 @@ export default function Page() {
 
   const [query, setQuery] = useState("");
   const debouncedQuery = useDebounce(query.trim(), 380);
-  const albumsQuery = trpc.juke.albums.useQuery();
+  const albumsQuery = trpc.juke.albums.useQuery(
+    { query: debouncedQuery },
+    { cacheTime: Infinity }
+  );
+  const devicesQuery = trpc.juke.sonosDevices.useQuery(undefined, {
+    cacheTime: 60,
+  });
 
-  const [current, setCurrent] = useState<Album | null>(null);
-
-  const albums = albumsQuery?.data ?? [];
-
-  const filteredAlbums = debouncedQuery
-    ? new Fuse(albums, {
-        keys: ["name", "artist"],
-        findAllMatches: true,
-        includeScore: true,
-        minMatchCharLength: 3,
-      })
-        .search(debouncedQuery)
-        .map(({ item }) => item)
-    : albums;
+  const albums = albumsQuery.data ?? [];
+  const currentAlbumId = useCurrentAlbumId();
+  const currentAlbum = albums.find(
+    ({ id }) => id.toString() === currentAlbumId
+  );
 
   useEffect(() => {
     function callback(event: KeyboardEvent) {
@@ -149,6 +249,8 @@ export default function Page() {
     };
   });
 
+  const [speaker, setSpeaker] = useState<Speaker | null>(null);
+
   return (
     <>
       <Head>
@@ -160,15 +262,31 @@ export default function Page() {
         <Popover>
           {() => (
             <Popover.Panel static>
-              {current ? (
+              {currentAlbum ? (
                 <div className="fixed bottom-6 right-6 z-20 max-w-xs transform overflow-hidden rounded-2xl bg-black/70 p-4 text-left align-middle text-neutral-500 drop-shadow-xl backdrop-blur-xl transition-all">
-                  <Player album={current} key={current.id} />
+                  <Player album={currentAlbum} key={currentAlbumId} />
                 </div>
               ) : null}
             </Popover.Panel>
           )}
         </Popover>
       </AudioPlayerProvider>
+
+      <Popover>
+        {() => (
+          <Popover.Panel static>
+            {devicesQuery.data ? (
+              <div className="fixed bottom-6 left-6 z-20 max-w-xs transform rounded-2xl bg-black/70 p-4 text-left align-middle text-neutral-500 drop-shadow-xl backdrop-blur-xl transition-all">
+                <SelectSonos
+                  options={devicesQuery.data}
+                  selected={speaker}
+                  setSelected={setSpeaker}
+                />
+              </div>
+            ) : null}
+          </Popover.Panel>
+        )}
+      </Popover>
 
       <main className="flex min-h-screen flex-col gap-2 bg-neutral-200 p-2">
         <div className="w-full">
@@ -180,49 +298,13 @@ export default function Page() {
             placeholder="Search"
             value={query}
             onChange={(event) => {
-              setQuery(event.target.value ?? "");
+              setQuery(event.target.value);
             }}
           />
         </div>
         <div className="flex w-full grow justify-center">
-          <div className="w-full overflow-hidden rounded-md bg-neutral-800">
-            {filteredAlbums ? (
-              <div className="grid w-full grid-cols-[repeat(auto-fill,minmax(min(10rem,100%),1fr))] justify-start">
-                {filteredAlbums.map((album) => (
-                  <button
-                    onClick={(event) => {
-                      event.detail === 2 ? setCurrent(album) : null;
-                    }}
-                    key={album.id}
-                    className="relative"
-                  >
-                    {album.id === current?.id ? (
-                      <div className="absolute inset-0 flex items-center justify-center bg-black/30 text-3xl text-white">
-                        <span className="animate-pulse">▶</span>
-                      </div>
-                    ) : null}
-                    {album.artpath.trim() ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        loading="lazy"
-                        src={`${URLBASE}${album.artpath}`}
-                        className="aspect-square h-full w-full object-cover"
-                        alt={`Cover of ${album.name}`}
-                      />
-                    ) : (
-                      <div className="flex h-full items-center justify-around bg-neutral-400 p-2 text-center text-sm">
-                        <div>
-                          <div className="font-bold">{album.artist}</div>
-                          {album.name}
-                        </div>
-                      </div>
-                    )}
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <p>Loading..</p>
-            )}
+          <div className="flex w-full flex-col rounded-md bg-neutral-800">
+            <Albums albums={albums} />
           </div>
         </div>
       </main>
