@@ -4,6 +4,7 @@ import {
   SonosEvents,
 } from "@svrooij/sonos/lib";
 import { Track } from "@svrooij/sonos/lib/models";
+import DeviceDescription from "@svrooij/sonos/lib/models/device-description";
 import { observable } from "@trpc/server/observable";
 import Fuse from "fuse.js";
 import { z } from "zod";
@@ -21,41 +22,70 @@ function getRelativePath(path: Buffer | null) {
     .join("/");
 }
 
-type SonosEvent =
+export type SonosEvent =
   | {
       type: "currentTrack";
       track: Track;
     }
-  | { type: "" };
+  | { type: "volume"; number: number }
+  | { type: "connected"; device: DeviceDescription };
 
 export const juke = router({
   sonosDevices: publicProcedure
     // .output(z.object({ device: Sonos }))
     .query(async () => {
       const discovery = new SonosDeviceDiscovery();
-      const results = await discovery.Search(15);
-      const speakers = results.map((speaker) => ({
-        name: speaker.model ?? "Unknown",
-        host: speaker.host,
-        port: speaker.port,
-      }));
-      return speakers;
+      const results = await discovery.Search(3);
+      return Promise.all(
+        results.map(async (speaker) => ({
+          name: (
+            await new SonosDevice(
+              speaker.host,
+              speaker.port
+            ).GetDeviceDescription()
+          ).roomName,
+          host: speaker.host,
+          port: speaker.port,
+        }))
+      );
     }),
   onSonosEvent: publicProcedure
     .input(z.object({ host: z.string(), port: z.number() }))
-    .subscription(({ input }) => {
+    .subscription(async ({ input }) => {
       const speaker = new SonosDevice(input.host, input.port);
+      console.log({ speaker });
+      const queue = await speaker.QueueService.CreateQueue({
+        QueueOwnerID: "bobby",
+        QueueOwnerContext: "sonos",
+        QueuePolicy: "",
+      });
+      console.log({ queue });
+      const device = await speaker.GetDeviceDescription();
+
       return observable<SonosEvent>((emit) => {
+        emit.next({ type: "connected", device });
         const onEvent = (data: SonosEvent) => {
           // emit data to client
+          console.log("event", { data });
           emit.next(data);
         };
         function onCurrentTrack(track: Track) {
           onEvent({ type: "currentTrack", track });
         }
+        function onVolume(number: number) {
+          onEvent({ type: "volume", number });
+        }
+        // function onControl(event: RenderingControlServiceEvent) {
+        //   onEvent({ type: "control", event });
+        // }
         speaker.Events.on(SonosEvents.CurrentTrackMetadata, onCurrentTrack);
+        speaker.Events.on(SonosEvents.Volume, onVolume);
+        // speaker.Events.on(SonosEvents.RenderingControl, onControl);
         return () => {
-          speaker.Events.off(SonosEvents.CurrentTrackMetadata, onCurrentTrack);
+          speaker.CancelEvents();
+          // speaker.Events.off(SonosEvents.CurrentTrackMetadata, onCurrentTrack);
+          // speaker.Events.off(SonosEvents.Volume, onVolume);
+          // speaker.Events.off(SonosEvents.RenderingControl, onControl);
         };
       });
     }),
