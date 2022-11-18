@@ -2,28 +2,11 @@ import { Listbox, Transition } from "@headlessui/react";
 import { ChevronUpDownIcon } from "@heroicons/react/20/solid";
 import { inferProcedureOutput } from "@trpc/server";
 import classNames from "classnames";
-import { Fragment, useState } from "react";
+import { Fragment } from "react";
 
-import { type SonosEvent } from "../server/trpc/router/juke";
 import { AppRouter } from "../server/trpc/router/_app";
-import { trpc } from "../utils/trpc";
 
 type Speaker = inferProcedureOutput<AppRouter["juke"]["sonosDevices"]>[0];
-
-function SonosSpeaker({ speaker }: { speaker: Speaker }) {
-  const [event, setEvent] = useState<SonosEvent | null>(null);
-  trpc.juke.onSonosEvent.useSubscription(speaker, {
-    onData: (event) => {
-      console.log({ event });
-      setEvent(event);
-    },
-  });
-  return (
-    <pre className="text-xs">
-      {JSON.stringify({ speaker, event }, undefined, 2)}
-    </pre>
-  );
-}
 
 export default function SelectSonos({
   options,
@@ -36,7 +19,6 @@ export default function SelectSonos({
 }) {
   return (
     <>
-      {!!selected && <SonosSpeaker speaker={selected} />}
       <Listbox value={selected} onChange={setSelected}>
         {({ open }) => (
           <>

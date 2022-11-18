@@ -13,12 +13,14 @@ import { publicProcedure, router } from "../trpc";
 
 const decoder = new TextDecoder("utf-8");
 
-function getRelativePath(path: Buffer | null) {
+const URLBASE = process.env.NEXT_PUBLIC_URLBASE ?? "";
+
+function getRelativePath(path: Buffer | null, encode: boolean) {
   return decoder
     .decode(path ?? undefined)
     .split("/")
     .slice(5)
-    .map((component) => encodeURIComponent(component))
+    .map((component) => (encode ? encodeURIComponent(component) : component))
     .join("/");
 }
 
@@ -27,8 +29,13 @@ export type SonosEvent =
       type: "currentTrack";
       track: Track;
     }
+  | {
+      type: "nextTrack";
+      track: Track;
+    }
   | { type: "volume"; number: number }
-  | { type: "connected"; device: DeviceDescription };
+  | { type: "connected"; device: DeviceDescription }
+  | { type: "stopped" };
 
 export const juke = router({
   sonosDevices: publicProcedure
@@ -49,24 +56,63 @@ export const juke = router({
         }))
       );
     }),
+  sonosQueueAlbum: publicProcedure
+    .input(
+      z.object({ trackId: z.number(), host: z.string(), port: z.number() })
+    )
+    .mutation(async ({ input, ctx }) => {
+      const track = await ctx.prisma.items.findUniqueOrThrow({
+        where: { id: input.trackId },
+        include: { Album: {} },
+      });
+      const speaker = new SonosDevice(input.host, input.port);
+      return speaker.AVTransportService.SetAVTransportURI({
+        InstanceID: 0,
+        CurrentURI: `${URLBASE}${getRelativePath(track.path, false)}`,
+        CurrentURIMetaData: {
+          Album: track.Album?.album ?? "Unknown",
+          Artist: track.artist ?? "Unknown",
+          Title: track.title ?? "Unknown",
+          AlbumArtUri: track.Album
+            ? `${URLBASE}/${getRelativePath(track.Album.artpath, true)}`
+            : undefined,
+          TrackUri: `${URLBASE}${getRelativePath(track.path, false)}`,
+          ProtocolInfo: "http-get:*:audio/mpeg:*",
+          UpnpClass: "object.item.audioItem.musicTrack",
+        },
+      });
+    }),
+  sonosPlay: publicProcedure
+    .input(z.object({ host: z.string(), port: z.number() }))
+    .mutation(async ({ input }) => {
+      const speaker = new SonosDevice(input.host, input.port);
+      return speaker.Play();
+    }),
+  sonosPause: publicProcedure
+    .input(z.object({ host: z.string(), port: z.number() }))
+    .mutation(async ({ input }) => {
+      const speaker = new SonosDevice(input.host, input.port);
+      return speaker.Pause();
+    }),
+  sonosSeek: publicProcedure
+    .input(
+      z.object({ host: z.string(), port: z.number(), position: z.number() })
+    )
+    .mutation(async ({ input }) => {
+      const speaker = new SonosDevice(input.host, input.port);
+      return speaker.SeekPosition(
+        new Date(input.position * 1000).toISOString().slice(11, 11 + 8)
+      );
+    }),
   onSonosEvent: publicProcedure
     .input(z.object({ host: z.string(), port: z.number() }))
     .subscription(async ({ input }) => {
       const speaker = new SonosDevice(input.host, input.port);
-      console.log({ speaker });
-      const queue = await speaker.QueueService.CreateQueue({
-        QueueOwnerID: "bobby",
-        QueueOwnerContext: "sonos",
-        QueuePolicy: "",
-      });
-      console.log({ queue });
       const device = await speaker.GetDeviceDescription();
 
       return observable<SonosEvent>((emit) => {
         emit.next({ type: "connected", device });
         const onEvent = (data: SonosEvent) => {
-          // emit data to client
-          console.log("event", { data });
           emit.next(data);
         };
         function onCurrentTrack(track: Track) {
@@ -75,17 +121,18 @@ export const juke = router({
         function onVolume(number: number) {
           onEvent({ type: "volume", number });
         }
-        // function onControl(event: RenderingControlServiceEvent) {
-        //   onEvent({ type: "control", event });
-        // }
+        function onStopped() {
+          onEvent({ type: "stopped" });
+        }
+        function onNextTrack(track: Track) {
+          onEvent({ type: "nextTrack", track });
+        }
         speaker.Events.on(SonosEvents.CurrentTrackMetadata, onCurrentTrack);
         speaker.Events.on(SonosEvents.Volume, onVolume);
-        // speaker.Events.on(SonosEvents.RenderingControl, onControl);
+        speaker.Events.on(SonosEvents.PlaybackStopped, onStopped);
+        speaker.Events.on(SonosEvents.NextTrackMetadata, onNextTrack);
         return () => {
           speaker.CancelEvents();
-          // speaker.Events.off(SonosEvents.CurrentTrackMetadata, onCurrentTrack);
-          // speaker.Events.off(SonosEvents.Volume, onVolume);
-          // speaker.Events.off(SonosEvents.RenderingControl, onControl);
         };
       });
     }),
@@ -98,8 +145,9 @@ export const juke = router({
       });
       return items.map((item) => ({
         id: item.id,
-        path: getRelativePath(item.path),
+        path: getRelativePath(item.path, true),
         name: item.title,
+        duration: item.length ?? 0,
       }));
     }),
   albums: publicProcedure
@@ -113,11 +161,12 @@ export const juke = router({
       });
       const albums = data.map((album) => ({
         id: album.id,
-        artpath: getRelativePath(album.artpath),
+        artpath: getRelativePath(album.artpath, true),
         name: album.album,
         artist: album.albumartist,
         firstTrackPath: getRelativePath(
-          album.items.find(({ path }) => path)?.path ?? null
+          album.items.find(({ path }) => path)?.path ?? null,
+          true
         ),
       }));
       return input.query && input.query.trim().length > 0

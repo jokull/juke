@@ -19,24 +19,19 @@ import type { AppRouter } from "../server/trpc/router/_app";
 import { trpc } from "../utils/trpc";
 
 type Album = inferProcedureOutput<AppRouter["juke"]["albums"]>[0];
+type Track = inferProcedureOutput<AppRouter["juke"]["tracks"]>[0];
 type Speaker = inferProcedureOutput<AppRouter["juke"]["sonosDevices"]>[0];
 
 const URLBASE = process.env.NEXT_PUBLIC_URLBASE ?? "";
 
-function Player({ album }: { album: Album }) {
-  const itemsQuery = trpc.juke.tracks.useQuery(
-    { id: album.id },
-    { cacheTime: Infinity }
-  );
-  const [index, setIndex] = useState(0);
+type NonEmptyArr<T> = [T, ...T[]];
 
-  const list = itemsQuery.data ?? [
-    { path: album.firstTrackPath, name: null, id: 0 },
-  ];
-  const path = list[index]?.path;
+function useBrowserPlayer(tracks: NonEmptyArr<Track>) {
+  const [index, setIndex] = useState(0);
+  const path = tracks[index]?.path;
 
   const { position, duration, seek } = useAudioPosition({
-    highRefreshRate: true,
+    highRefreshRate: false,
   });
 
   const { togglePlayPause, playing } = useAudioPlayer({
@@ -49,6 +44,141 @@ function Player({ album }: { album: Album }) {
     },
   });
 
+  return {
+    index,
+    setIndex,
+    position,
+    duration,
+    seek,
+    togglePlayPause,
+    playing,
+  };
+}
+
+function useSonosPlayer(
+  speaker: Speaker,
+  tracks: NonEmptyArr<Track>
+): ReturnType<typeof useBrowserPlayer> {
+  const queueAlbum = trpc.juke.sonosQueueAlbum.useMutation();
+  const pause = trpc.juke.sonosPause.useMutation();
+  const play = trpc.juke.sonosPlay.useMutation();
+  const seek = trpc.juke.sonosSeek.useMutation();
+
+  trpc.juke.onSonosEvent.useSubscription(speaker, {
+    onData: (event) => {
+      if (event.type === "currentTrack") {
+        // Potentially queue next track
+      }
+      if (event.type === "stopped") {
+        if (playing) {
+          setIndex((previous) => {
+            const next = tracks[previous + 1];
+            if (next) {
+              return previous + 1;
+            } else {
+              setPlaying(false);
+              return previous;
+            }
+          });
+        }
+      }
+    },
+  });
+
+  const [index, setIndex] = useState(0);
+  const [playing, setPlaying] = useState(true);
+  const [position, setPosition] = useState(0);
+
+  useEffect(() => {
+    function tick() {
+      if (playing) {
+        setPosition((previous) => previous + 1);
+      }
+    }
+    const timeout = setTimeout(tick, 1000);
+    return () => {
+      clearTimeout(timeout);
+    };
+  });
+
+  const track = tracks[index] ?? tracks[0];
+
+  useEffect(() => {
+    void queueAlbum.mutateAsync({ ...speaker, trackId: track.id }).then(() => {
+      void play.mutateAsync({ ...speaker }).then(() => {
+        setPlaying(true);
+        setPosition(0);
+      });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [track]);
+
+  function togglePlayPause() {
+    if (playing) {
+      setPlaying(false);
+      void pause.mutateAsync({ ...speaker });
+    } else {
+      setPlaying(true);
+      void play.mutateAsync({ ...speaker });
+    }
+  }
+
+  return {
+    index,
+    setIndex,
+    position,
+    duration: track.duration,
+    seek: (position) => {
+      void seek.mutateAsync({ ...speaker, position }).then(() => {
+        setPosition(() => {
+          return position;
+        });
+      });
+      return position;
+    },
+    togglePlayPause,
+    playing,
+  };
+}
+
+function SonosPlayer({
+  speaker,
+  album,
+  tracks,
+}: {
+  speaker: Speaker;
+  album: Album;
+  tracks: NonEmptyArr<Track>;
+}) {
+  const player = useSonosPlayer(speaker, tracks);
+  return <Player {...player} album={album} tracks={tracks} />;
+}
+
+function BrowserPlayer({
+  album,
+  tracks,
+}: {
+  album: Album;
+  tracks: NonEmptyArr<Track>;
+}) {
+  const player = useBrowserPlayer(tracks);
+  return <Player {...player} album={album} tracks={tracks} />;
+}
+
+function Player({
+  tracks,
+  album,
+  index,
+  setIndex,
+  position,
+  duration,
+  seek,
+  togglePlayPause,
+  playing,
+}: ReturnType<typeof useBrowserPlayer> & {
+  album: Album;
+  tracks: NonEmptyArr<Track>;
+}) {
   return (
     <div className="flex flex-col gap-4">
       <div className="font-mono text-xs">
@@ -56,7 +186,7 @@ function Player({ album }: { album: Album }) {
           {album.artist} / {album.name}
         </p>
         <ol className="hide-scrollbar flex max-h-64 flex-col items-start gap-0.5 overflow-y-auto">
-          {list.map((track, i) => (
+          {tracks.map((track, i) => (
             <li
               className={`w-full ${i === index ? "text-white" : ""}`}
               key={track.id}
@@ -235,6 +365,16 @@ export default function Page() {
     ({ id }) => id.toString() === currentAlbumId
   );
 
+  const itemsQuery = trpc.juke.tracks.useQuery(
+    { id: currentAlbum?.id ?? 0 },
+    { cacheTime: Infinity, enabled: !!currentAlbum }
+  );
+
+  const tracks =
+    itemsQuery.data && itemsQuery.data.length > 0
+      ? (itemsQuery.data as NonEmptyArr<Track>)
+      : null;
+
   useEffect(() => {
     function callback(event: KeyboardEvent) {
       if (event.key === "k" && event.metaKey && ref.current) {
@@ -262,9 +402,22 @@ export default function Page() {
         <Popover>
           {() => (
             <Popover.Panel static>
-              {currentAlbum ? (
+              {currentAlbum && tracks ? (
                 <div className="fixed bottom-6 right-6 z-20 max-w-xs transform overflow-hidden rounded-2xl bg-black/70 p-4 text-left align-middle text-neutral-500 drop-shadow-xl backdrop-blur-xl transition-all">
-                  <Player album={currentAlbum} key={currentAlbumId} />
+                  {speaker ? (
+                    <SonosPlayer
+                      speaker={speaker}
+                      album={currentAlbum}
+                      tracks={tracks}
+                      key={currentAlbumId}
+                    />
+                  ) : (
+                    <BrowserPlayer
+                      album={currentAlbum}
+                      tracks={tracks}
+                      key={currentAlbumId}
+                    />
+                  )}
                 </div>
               ) : null}
             </Popover.Panel>
