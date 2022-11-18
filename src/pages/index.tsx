@@ -1,6 +1,5 @@
 import { Popover } from "@headlessui/react";
 import * as Slider from "@radix-ui/react-slider";
-import { useVirtualizer } from "@tanstack/react-virtual";
 import type { inferProcedureOutput } from "@trpc/server";
 import classNames from "classnames";
 import Head from "next/head";
@@ -11,8 +10,7 @@ import {
   useAudioPlayer,
   useAudioPosition,
 } from "react-use-audio-player";
-import * as R from "remeda";
-import { useDebounce, useElementSize } from "usehooks-ts";
+import { useDebounce } from "usehooks-ts";
 
 import SelectSonos from "../components/SelectSonos";
 import type { AppRouter } from "../server/trpc/router/_app";
@@ -43,6 +41,16 @@ function useBrowserPlayer(tracks: NonEmptyArr<Track>) {
       setIndex((previous) => previous + 1);
     },
   });
+
+  useEffect(() => {
+    return () => {
+      // Stop playback on unmount
+      if (playing) {
+        togglePlayPause();
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [togglePlayPause]);
 
   return {
     index,
@@ -252,11 +260,11 @@ function useCurrentAlbumId() {
   return new URL(router.asPath, "https://localhost").searchParams.get("album");
 }
 
-function Row({ albums, count }: { albums: Album[]; count: number }) {
+function Albums({ albums }: { albums: Album[] }) {
   const currentAlbumId = useCurrentAlbumId();
   const router = useRouter();
   return (
-    <>
+    <div className="mb-[50vh] grid grid-cols-[repeat(auto-fill,minmax(min(10rem,100%),1fr))]">
       {albums.map((album) => (
         <button
           onClick={(event) => {
@@ -268,7 +276,6 @@ function Row({ albums, count }: { albums: Album[]; count: number }) {
           }}
           key={album.id}
           className="relative aspect-square"
-          style={{ width: `${100 / count}%` }}
         >
           {album.id.toString() === currentAlbumId ? (
             <div className="absolute inset-0 flex items-center justify-center bg-black/30 text-3xl text-white">
@@ -280,11 +287,11 @@ function Row({ albums, count }: { albums: Album[]; count: number }) {
             <img
               loading="lazy"
               src={`${URLBASE}${album.artpath}`}
-              className="aspect-square w-full object-cover"
+              className="w-fill aspect-square h-full object-cover"
               alt={`Cover of ${album.name ?? "unknown"}`}
             />
           ) : (
-            <div className="flex aspect-square w-full items-center justify-around bg-neutral-400 p-2 text-center text-sm">
+            <div className="flex h-full w-full items-center justify-around bg-neutral-400 p-2 text-center text-sm">
               <div>
                 <div className="font-bold">{album.artist}</div>
                 {album.name}
@@ -293,55 +300,6 @@ function Row({ albums, count }: { albums: Album[]; count: number }) {
           )}
         </button>
       ))}
-    </>
-  );
-}
-
-function Albums({ albums }: { albums: Album[] }) {
-  const [parentEl, setParentEl] = useState<HTMLDivElement | null>(null);
-  const [parentRef, { width }] = useElementSize();
-
-  const count = Math.floor(width / 144);
-  const rows = R.chunk(albums, count);
-
-  const rowVirtualizer = useVirtualizer({
-    count: rows.length,
-    getScrollElement: () => parentEl,
-    estimateSize: () => 144,
-  });
-
-  return (
-    <div
-      ref={(el) => {
-        parentRef(el);
-        setParentEl(el);
-      }}
-      className="overflow-hidden rounded-md"
-    >
-      <div
-        style={{
-          height: rowVirtualizer.getTotalSize(),
-        }}
-        className="relative w-full"
-      >
-        {rowVirtualizer.getVirtualItems().map((virtualRow) => (
-          <div
-            key={virtualRow.key}
-            data-index={virtualRow.index}
-            ref={rowVirtualizer.measureElement}
-            style={{
-              position: "absolute",
-              top: 0,
-              left: 0,
-              width: "100%",
-              transform: `translateY(${virtualRow.start}px)`,
-            }}
-            className="flex"
-          >
-            <Row albums={rows[virtualRow.index] ?? []} count={count} />
-          </div>
-        ))}
-      </div>
     </div>
   );
 }
@@ -350,7 +308,7 @@ export default function Page() {
   const ref = useRef<HTMLInputElement>(null);
 
   const [query, setQuery] = useState("");
-  const debouncedQuery = useDebounce(query.trim(), 380);
+  const debouncedQuery = useDebounce(query.trim(), 480);
   const albumsQuery = trpc.juke.albums.useQuery(
     { query: debouncedQuery },
     { cacheTime: Infinity }
@@ -441,7 +399,7 @@ export default function Page() {
         )}
       </Popover>
 
-      <main className="flex min-h-screen flex-col gap-2 bg-neutral-200 p-2">
+      <main className="flex h-screen flex-col gap-2 bg-neutral-200 p-2">
         <div className="w-full">
           <input
             className="block w-full rounded-md border-gray-300 shadow-sm focus:border-purple-500 focus:ring-purple-500 sm:text-sm"
@@ -455,10 +413,14 @@ export default function Page() {
             }}
           />
         </div>
-        <div className="flex w-full grow justify-center">
-          <div className="flex w-full flex-col rounded-md bg-neutral-800">
-            <Albums albums={albums} />
+        <div className="relative flex w-full grow justify-center">
+          <div className="absolute inset-0 overflow-hidden rounded-md bg-neutral-900">
+            <div className="h-full w-full overflow-y-auto">
+              <Albums albums={albums} />
+            </div>
           </div>
+          {/* <div className="h-full w-full rounded-md bg-neutral-800">
+          </div> */}
         </div>
       </main>
     </>
